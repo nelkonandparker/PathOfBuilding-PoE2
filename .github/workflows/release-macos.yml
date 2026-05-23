@@ -1,0 +1,48 @@
+name: Create macOS distribution
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag to upload to'
+        required: true
+        default: 'v0.x.x'
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+jobs:
+  build_dist:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assemble distribution
+        run: |
+          DIST="PathOfBuilding-PoE2-macos-arm64"
+          mkdir -p "$DIST"
+          # Dereference all symlinks so the tarball is self-contained
+          # (Assets/Classes/Data/Export/Modules/TreeData → real copies from src/,
+          #  lua/ → real copy of runtime/lua/, *.so → real copies of *.dylib)
+          cp -RL runtime-macos/. "$DIST/"
+
+      - name: Adhoc-sign binaries
+        run: |
+          DIST="PathOfBuilding-PoE2-macos-arm64"
+          for f in "$DIST/pob2" "$DIST"/*.dylib; do
+            [ -f "$f" ] || continue
+            codesign --force --sign - "$f"
+          done
+
+      - name: Create archive
+        run: |
+          DIST="PathOfBuilding-PoE2-macos-arm64"
+          tar -czf "$DIST.tar.gz" "$DIST"
+          ls -la "$DIST.tar.gz"
+
+      - name: Upload to release
+        run: |
+          TAG="${{ github.event.release.tag_name || github.event.inputs.tag_name }}"
+          gh release upload "$TAG" \
+            PathOfBuilding-PoE2-macos-arm64.tar.gz \
+            --clobber -R "${{ github.repository }}"

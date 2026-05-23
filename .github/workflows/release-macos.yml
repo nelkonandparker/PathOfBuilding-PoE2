@@ -19,27 +19,57 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Assemble distribution
+      - name: Build launcher (with rpaths for both flat and .app layouts)
         run: |
-          DIST="PathOfBuilding-PoE2-macos-arm64"
-          mkdir -p "$DIST"
-          # Dereference all symlinks so the tarball is self-contained
-          # (Assets/Classes/Data/Export/Modules/TreeData → real copies from src/,
-          #  lua/ → real copy of runtime/lua/, *.so → real copies of *.dylib)
-          cp -RL runtime-macos/. "$DIST/"
+          clang -O2 runtime-macos/launcher.c -o /tmp/pob2 \
+            -Lruntime-macos -lSimpleGraphic \
+            -Wl,-rpath,@executable_path \
+            -Wl,-rpath,@executable_path/../Resources
 
-      - name: Adhoc-sign binaries
+      - name: Assemble .app bundle
         run: |
-          DIST="PathOfBuilding-PoE2-macos-arm64"
-          for f in "$DIST/pob2" "$DIST"/*.dylib; do
-            [ -f "$f" ] || continue
-            codesign --force --sign - "$f"
+          APP="Path of Building 2.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+          # Info.plist + launcher binary
+          cp runtime-macos/Info.plist "$APP/Contents/"
+          cp /tmp/pob2 "$APP/Contents/MacOS/pob2"
+
+          # Cross-dir symlinks → real copies in Resources/ (self-contained bundle)
+          for d in Assets Classes Data Export Modules TreeData lua SimpleGraphic; do
+            cp -RL "runtime-macos/$d" "$APP/Contents/Resources/$d"
           done
+
+          # Real files (root Lua scripts + the actual dylibs)
+          for f in runtime-macos/*.lua \
+                   runtime-macos/libSimpleGraphic.dylib \
+                   runtime-macos/liblibEGL_angle.dylib \
+                   runtime-macos/liblibGLESv2_angle.dylib \
+                   runtime-macos/liblcurl.dylib \
+                   runtime-macos/liblua-utf8.dylib \
+                   runtime-macos/liblzip.dylib \
+                   runtime-macos/libsocket.dylib; do
+            cp "$f" "$APP/Contents/Resources/"
+          done
+
+          # Sibling symlinks → preserve as symlinks (they point at sibling dylibs)
+          for s in runtime-macos/lcurl.so \
+                   runtime-macos/lua-utf8.so \
+                   runtime-macos/lzip.so \
+                   runtime-macos/socket.so \
+                   runtime-macos/libEGL.dylib \
+                   runtime-macos/libGLESv2.dylib; do
+            cp -P "$s" "$APP/Contents/Resources/"
+          done
+
+      - name: Adhoc-sign .app bundle
+        run: |
+          codesign --force --deep --sign - "Path of Building 2.app"
 
       - name: Create archive
         run: |
           DIST="PathOfBuilding-PoE2-macos-arm64"
-          tar -czf "$DIST.tar.gz" "$DIST"
+          tar -czf "$DIST.tar.gz" "Path of Building 2.app"
           ls -la "$DIST.tar.gz"
 
       - name: Upload to release
